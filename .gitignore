@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenv files
+venv/
+.venv/
+env/
+env.bak/
+
+# Jupyter Notebook Files
+.ipynb_checkpoints/
+
+# Logs and databases
+logs/
+*.log
+*.sqlite
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Miscellaneous
+*.swp
+*.swo
+*.bak
+
+# vs code
+.vscode/
