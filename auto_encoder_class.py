@@ -9,14 +9,18 @@ class AutoEncoder:
         self.encode_layers = encode_layers
         self.decode_layers = decode_layers
         
-        # Initialisation des paramètres (Xavier)
-        scale = np.sqrt(2.0 / input_dim)
+        # Initialisation des paramètres 
+        scale = np.sqrt(2.0 / input_dim) # centrage
+
+        # Parametres d'input
         self.input_parameter = (torch.randn(self.input_dim, self.hidden_dim) * scale).clone().detach().requires_grad_(True)
         self.input_bias = torch.zeros((self.hidden_dim,), requires_grad=True)
-        self.output_parameter = (torch.randn(self.hidden_dim, self.input_dim) * scale).clone().detach().requires_grad_(True)
 
+        # Parametres d'output
+        self.output_parameter = (torch.randn(self.hidden_dim, self.input_dim) * scale).clone().detach().requires_grad_(True)
         self.output_bias = torch.zeros((self.input_dim,), requires_grad=True)
         
+        # Parametres des autres couches 
         self.encode_parameters = [(torch.randn(self.hidden_dim, self.hidden_dim)* scale).clone().detach().requires_grad_(True)
                                    for _ in range(self.encode_layers)]
         self.encode_bias = [torch.zeros((self.hidden_dim,), requires_grad=True) 
@@ -36,7 +40,7 @@ class AutoEncoder:
         self.params.extend(self.decode_parameters)
         self.params.extend(self.decode_bias)
         
-        # Initialiser les états pour chaque optimiseur
+        # Initialiser les états pour chaque optimiseur (sgd classique n'en a pas besoin)
         self.init_optimizer_states()
 
     def init_optimizer_states(self):
@@ -49,27 +53,32 @@ class AutoEncoder:
         self.v = {i: torch.zeros_like(p) for i, p in enumerate(self.params)}  # Second moment (RMSprop)
         self.t = 0  # Compteur de pas pour bias correction
 
+    # Encode -> compression des données
     def encode(self, X, activation_function=torch.relu):
         X = X.to(torch.float32)
         X = activation_function(torch.matmul(X, self.input_parameter) + self.input_bias)
         for i in range(self.encode_layers):
             X = activation_function(torch.matmul(X, self.encode_parameters[i]) + self.encode_bias[i])
         return X
-
+    
+    # Decode -> Retranscription des données
     def decode(self, X, activation_function=torch.relu):
         for i in range(self.decode_layers):
             X = activation_function(torch.matmul(X, self.decode_parameters[i]) + self.decode_bias[i])
         X = torch.sigmoid(torch.matmul(X, self.output_parameter) + self.output_bias)
         return X
 
+    # Forward pass complete
     def forward(self, X, activation_function=torch.relu):
         encoded = self.encode(X, activation_function)
         decoded = self.decode(encoded, activation_function)
         return decoded
 
+    # MSE
     def mse_loss(self, X_pred, X):
         return torch.mean(torch.square(X - X_pred))
 
+    # Differents optimiseurs
     def sgd_step(self, learning_rate):
         """SGD Vanilla - comme ton code original"""
         with torch.no_grad():
@@ -91,7 +100,6 @@ class AutoEncoder:
 
     def adam_step(self, learning_rate, beta1=0.9, beta2=0.999, eps=1e-8):
         """
-        Adam Optimizer from scratch
         
         Adam = Adaptive Moment Estimation
         Combine:
@@ -142,7 +150,6 @@ class AutoEncoder:
             optimizer: 'sgd', 'momentum', ou 'adam'
             **kwargs: arguments supplémentaires pour l'optimiseur
         """
-        loss_history = []
         
         for epoch in range(epochs):
             # Forward pass
@@ -165,8 +172,6 @@ class AutoEncoder:
                 self.adam_step(learning_rate, beta1, beta2, eps)
             else:
                 raise ValueError(f"Optimiseur inconnu: {optimizer}")
-            
-            loss_history.append(loss.item())
             
             if epoch % 100 == 0:
                 print(f"[{optimizer.upper()}] Epoch {epoch:4d}, Loss: {loss.item():.6f}")
