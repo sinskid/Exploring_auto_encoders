@@ -35,14 +35,14 @@ for i in range(10):
 
 plt.savefig("mnist_images.png")  
 
-ae = AutoEncoder(input_dim=784, hidden_dim=36, encode_layers=1, decode_layers=1)  # Créer une instance de l'autoencodeur
+ae = AutoEncoder(input_dim=784, hidden_dim=36, encode_layers=3, decode_layers=3)  # Créer une instance de l'autoencodeur
 
 X_train = mnist_train.data
 X_train = X_train.reshape(-1, 784) / 255  # Reshape les données d'entraînement pour qu'elles soient compatibles avec l'autoencodeur
 X_test = mnist_test.data
 X_test = X_test.reshape(-1, 784) / 255
 
-ae.train(X_train,0.005,5000)  # Entraîner l'autoencodeur sur les données d'entraînement
+ae.train(X_train,0.001,100001)  # Entraîner l'autoencodeur sur les données d'entraînement
 
 # Test l'autoencodeur sur des données de test
 m = int(5)

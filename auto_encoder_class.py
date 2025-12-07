@@ -3,38 +3,28 @@ import matplotlib.pyplot as plt
 import torch
 
 class AutoEncoder:
-    def __init__(self, input_dim, hidden_dim, encode_layers=0, decode_layers=0):
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
+    def __init__(self, input_dim, hidden_dim, encode_layers=1, decode_layers=1):
         self.encode_layers = encode_layers
         self.decode_layers = decode_layers
-        
+        self.encode_dims = np.linspace(input_dim, hidden_dim, encode_layers + 1,dtype=int)
+        self.decode_dims = np.linspace(hidden_dim, input_dim, decode_layers + 1,dtype=int)
+    
         # Initialisation des paramètres 
-        scale = np.sqrt(2.0 / input_dim) # centrage
-
-        # Parametres d'input
-        self.input_parameter = (torch.randn(self.input_dim, self.hidden_dim) * scale).clone().detach().requires_grad_(True)
-        self.input_bias = torch.zeros((self.hidden_dim,), requires_grad=True)
-
-        # Parametres d'output
-        self.output_parameter = (torch.randn(self.hidden_dim, self.input_dim) * scale).clone().detach().requires_grad_(True)
-        self.output_bias = torch.zeros((self.input_dim,), requires_grad=True)
+        scale_encode = np.sqrt(2.0 / self.encode_dims) # centrage
+        scale_decode = np.sqrt(2.0 / self.decode_dims)
         
         # Parametres des autres couches 
-        self.encode_parameters = [(torch.randn(self.hidden_dim, self.hidden_dim)* scale).clone().detach().requires_grad_(True)
-                                   for _ in range(self.encode_layers)]
-        self.encode_bias = [torch.zeros((self.hidden_dim,), requires_grad=True) 
-                           for _ in range(self.encode_layers)]
-        self.decode_parameters = [(torch.randn(self.hidden_dim, self.hidden_dim)* scale).clone().detach().requires_grad_(True)
-                                   for _ in range(self.decode_layers)]
-        self.decode_bias = [torch.zeros((self.hidden_dim,), requires_grad=True) 
-                           for _ in range(self.decode_layers)]
+        self.encode_parameters = [(torch.randn(self.encode_dims[i], self.encode_dims[i+1])* scale_encode[i]).clone().detach().requires_grad_(True)
+                                for i in range(self.encode_layers)]
+        self.encode_bias = [torch.zeros((self.encode_dims[i+1],), requires_grad=True) 
+                        for i in range(self.encode_layers)]
+        self.decode_parameters = [(torch.randn(self.decode_dims[i], self.decode_dims[i+1])* scale_decode[i]).clone().detach().requires_grad_(True)
+                                for i in range(self.decode_layers)]
+        self.decode_bias = [torch.zeros((self.decode_dims[i+1],), requires_grad=True) 
+                        for i in range(self.decode_layers)]
         
         # Collecter tous les paramètres
-        self.params = [
-            self.input_parameter, self.input_bias,
-            self.output_parameter, self.output_bias
-        ]
+        self.params = []
         self.params.extend(self.encode_parameters)
         self.params.extend(self.encode_bias)
         self.params.extend(self.decode_parameters)
@@ -56,16 +46,15 @@ class AutoEncoder:
     # Encode -> compression des données
     def encode(self, X, activation_function=torch.relu):
         X = X.to(torch.float32)
-        X = activation_function(torch.matmul(X, self.input_parameter) + self.input_bias)
         for i in range(self.encode_layers):
             X = activation_function(torch.matmul(X, self.encode_parameters[i]) + self.encode_bias[i])
         return X
     
     # Decode -> Retranscription des données
     def decode(self, X, activation_function=torch.relu):
-        for i in range(self.decode_layers):
+        for i in range(self.decode_layers-1):
             X = activation_function(torch.matmul(X, self.decode_parameters[i]) + self.decode_bias[i])
-        X = torch.sigmoid(torch.matmul(X, self.output_parameter) + self.output_bias)
+        X = torch.sigmoid(torch.matmul(X, self.decode_parameters[-1]) + self.decode_bias[-1])
         return X
 
     # Forward pass complete
@@ -151,10 +140,18 @@ class AutoEncoder:
             **kwargs: arguments supplémentaires pour l'optimiseur
         """
         
+        n = X.shape[0]
+        chunk_nb = n // kwargs.get('batch_size' , 200)
+        chunks = torch.chunk(X, chunk_nb)
+
         for epoch in range(epochs):
             # Forward pass
-            X_pred = self.forward(X)
-            loss = self.mse_loss(X_pred, X)
+            indice = np.random.randint(chunk_nb)
+
+            X_batched = chunks[indice]
+
+            X_pred_batched = self.forward(X_batched)
+            loss = self.mse_loss(X_pred_batched, X_batched)
             
             # Backward pass
             loss.backward()
