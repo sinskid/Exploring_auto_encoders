@@ -29,19 +29,17 @@ class AutoEncoder:
         self.params.extend(self.encode_bias)
         self.params.extend(self.decode_parameters)
         self.params.extend(self.decode_bias)
-        
-        # Initialiser les états pour chaque optimiseur (sgd classique n'en a pas besoin)
-        self.init_optimizer_states()
 
-    def init_optimizer_states(self):
-        """Initialise les états pour momentum et Adam"""
-        # Pour SGD + Momentum
-        self.velocities = {i: torch.zeros_like(p) for i, p in enumerate(self.params)}
-        
-        # Pour Adam
+        # retiens les loss
+        self.loss_history = []
+
+        # Param Adam
         self.m = {i: torch.zeros_like(p) for i, p in enumerate(self.params)}  # Premier moment (momentum)
         self.v = {i: torch.zeros_like(p) for i, p in enumerate(self.params)}  # Second moment (RMSprop)
         self.t = 0  # Compteur de pas pour bias correction
+
+        # Param NAG
+        self.j = 0
 
     # Encode -> compression des données
     def encode(self, X, activation_function=torch.relu):
@@ -52,6 +50,7 @@ class AutoEncoder:
     
     # Decode -> Retranscription des données
     def decode(self, X, activation_function=torch.relu):
+        X = X.to(torch.float32)
         for i in range(self.decode_layers-1):
             X = activation_function(torch.matmul(X, self.decode_parameters[i]) + self.decode_bias[i])
         X = torch.sigmoid(torch.matmul(X, self.decode_parameters[-1]) + self.decode_bias[-1])
@@ -76,16 +75,33 @@ class AutoEncoder:
                     p.data -= learning_rate * p.grad
                     p.grad.zero_()
 
-    def momentum_step(self, learning_rate, momentum=0.9):
-        """SGD + Momentum"""
+    def nag_function_restart_step(self,learning_rate,b=3,kmin=50):
+        
+        # Restart de beta(parametre de friction) si la loss augmente
+        if self.j >= kmin and self.loss_history[-2] < self.loss_history[-1] :
+            self.j = 0
+        else:
+            self.j += 1
+        
+        # Vanishing friction 
+        beta_j = self.j / (b + self.j)
+
         with torch.no_grad():
             for i, p in enumerate(self.params):
                 if p.grad is not None:
-                    # velocity = momentum * velocity + gradient
-                    self.velocities[i] = momentum * self.velocities[i] + p.grad
-                    # param = param - lr * velocity
-                    p.data -= learning_rate * self.velocities[i]
+                    grad = p.grad
+                    
+                    # Etape 1 : Descente de gradient classique
+                    m_next = p - learning_rate*grad
+
+                    # Etape 2 : Momentum Nesterov
+                    p.data = m_next + beta_j*(m_next - self.m[i])
+                    
+                    # Etape 3 : Actualise le point de descente
+                    self.m[i] = m_next
+
                     p.grad.zero_()
+
 
     def adam_step(self, learning_rate, beta1=0.9, beta2=0.999, eps=1e-8):
         """
@@ -109,21 +125,17 @@ class AutoEncoder:
                 if p.grad is not None:
                     grad = p.grad
                     
-                    # Étape 1: Mettre à jour le premier moment (momentum)
-                    # m = beta1 * m + (1 - beta1) * gradient
-                    self.m[i] = beta1 * self.m[i] + (1 - beta1) * grad
+                    # Etape 1: Mettre à jour le premier moment (momentum)
+                    self.m[i] = (1-beta1) * self.m[i] + beta1 * grad
+                
+                    # Etape 2: Mettre à jour le second moment (variance du gradient)
+                    self.v[i] = (1-beta2) * self.v[i] + beta2 * (grad ** 2)
                     
-                    # Étape 2: Mettre à jour le second moment (variance du gradient)
-                    # v = beta2 * v + (1 - beta2) * gradient²
-                    self.v[i] = beta2 * self.v[i] + (1 - beta2) * (grad ** 2)
-                    
-                    # Étape 3: Bias correction (important au début!)
-                    # Au début, m et v sont biaisés vers 0 car initialisés à 0
+                    # Etape 3: Bias correction (important au début!)
                     m_hat = self.m[i] / (1 - beta1 ** self.t)
                     v_hat = self.v[i] / (1 - beta2 ** self.t)
                     
-                    # Étape 4: Mise à jour du paramètre
-                    # param = param - lr * m_hat / (sqrt(v_hat) + eps)
+                    # Etape 4: Mise à jour du paramètre
                     p.data -= learning_rate * m_hat / (torch.sqrt(v_hat) + eps)
                     
                     p.grad.zero_()
@@ -136,41 +148,43 @@ class AutoEncoder:
             X: données d'entraînement
             learning_rate: taux d'apprentissage
             epochs: nombre d'époques
-            optimizer: 'sgd', 'momentum', ou 'adam'
+            optimizer: 'sgd', 'adam' ou 'nag_restart_function'
             **kwargs: arguments supplémentaires pour l'optimiseur
         """
         
         n = X.shape[0]
         chunk_nb = n // kwargs.get('batch_size' , 200)
         chunks = torch.chunk(X, chunk_nb)
-
+        
+        
         for epoch in range(epochs):
             # Forward pass
             indice = np.random.randint(chunk_nb)
-
             X_batched = chunks[indice]
-
             X_pred_batched = self.forward(X_batched)
-            loss = self.mse_loss(X_pred_batched, X_batched)
             
+            loss = self.mse_loss(X_pred_batched, X_batched)
+            self.loss_history.append(loss.item())
+
             # Backward pass
             loss.backward()
             
             # Optimizer step
             if optimizer == 'sgd':
                 self.sgd_step(learning_rate)
-            elif optimizer == 'momentum':
-                momentum = kwargs.get('momentum', 0.9)
-                self.momentum_step(learning_rate, momentum)
             elif optimizer == 'adam':
                 beta1 = kwargs.get('beta1', 0.9)
                 beta2 = kwargs.get('beta2', 0.999)
                 eps = kwargs.get('eps', 1e-8)
                 self.adam_step(learning_rate, beta1, beta2, eps)
+            elif optimizer == "nag_restart_function":
+                self.j = 0
+                b = kwargs.get('b', 3)
+                kmin = kwargs.get('kmin', 50)
+                self.nag_function_restart_step(learning_rate,b,kmin)
             else:
                 raise ValueError(f"Optimiseur inconnu: {optimizer}")
             
             if epoch % 100 == 0:
                 print(f"[{optimizer.upper()}] Epoch {epoch:4d}, Loss: {loss.item():.6f}")
-
 
